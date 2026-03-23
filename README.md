@@ -1,2 +1,2 @@
 # Athletica
-Sport app final homework
+Global Athlete Social Platform(Sport app final homework)
