@@ -203,11 +203,7 @@ Athletica должна стать не отдельным приложением
 
 ### 7.0.1 Количество ЦОД и модель размещения
 
-Для обеспечения отказоустойчивости, производительности и безопасности система должна использовать как минимум:
-
-- два географически независимых региона;
-- в каждом регионе — не менее одного ЦОД (центр обработки данных);
-- предпочтительно — два ЦОД в критичных регионах (active-active или active-passive конфигурация).
+Для платформы Athletica принимается минимальная модель размещения из двух географически независимых регионов, в каждом из которых используются два ЦОД (центр обработки данных): основной и резервный.
 
 Рекомендуемая минимальная модель:
 
@@ -235,12 +231,13 @@ Athletica должна стать не отдельным приложением
 #### 2. Failover (переключение при сбое)
 
 - при отказе ЦОД внутри региона происходит переключение на резервный ЦОД;
+- резервный ЦОД внутри региона не обслуживает основной трафик в штатном режиме и используется как standby-контур для быстрого восстановления;
 - при отказе региона происходит переключение на другой регион;
 - переключение выполняется автоматически на уровне инфраструктуры.
 
 #### 3. Репликация данных
 
-- критичные данные (Auth, Profile) реплицируются между регионами;
+- критичные транзакционные данные (Auth, Profile, Training) реплицируются между регионами;
 - аналитические данные реплицируются асинхронно;
 - события синхронизируются между Event Broker разных регионов;
 - используется eventual consistency.
@@ -397,18 +394,21 @@ Athletica должна стать не отдельным приложением
 
 ---
 
-## 9. Базовая логическая схема критичных multi-region компонентов
+## 9. Базовая логическая схема multi-region архитектуры
 
 ```mermaid
-flowchart LR
-    Users[Пользовательские клиенты] --> Routing[Geo Routing и API Gateway]
-    Devices[Устройства и партнёры] --> DeviceIntegration[Device Integration Domain]
+flowchart TB
+    U[Пользовательские клиенты]
+    D[Устройства и партнёры]
+    G[Geo Routing и API Gateway]
 
-    Routing --> Region1[Регион 1]
-    Routing --> Region2[Регион 2]
+    U --> G
 
-    subgraph R1[Регион 1 active-active]
-        subgraph DC1[ЦОД 1 — основной]
+    G --> R1_ENTRY[Регион 1 active-active]
+    G --> R2_ENTRY[Регион 2 active-active]
+
+    subgraph R1[Регион 1]
+        subgraph R1DC1[ЦОД 1 — основной]
             Auth1[Auth Domain]
             Profile1[Profile Domain]
             Training1[Training Domain]
@@ -418,10 +418,11 @@ flowchart LR
             Notification1[Notification Domain]
             Analytics1[Analytics Domain]
             Commerce1[Commerce Integration Domain]
+            DeviceIntegration1[Device Integration Domain]
             Broker1[Event Broker]
         end
 
-        subgraph DC2[ЦОД 2 — резервный]
+        subgraph R1DC2[ЦОД 2 — резервный standby]
             Auth1b[Auth Domain]
             Profile1b[Profile Domain]
             Training1b[Training Domain]
@@ -431,12 +432,13 @@ flowchart LR
             Notification1b[Notification Domain]
             Analytics1b[Analytics Domain]
             Commerce1b[Commerce Integration Domain]
+            DeviceIntegration1b[Device Integration Domain]
             Broker1b[Event Broker]
         end
     end
 
-    subgraph R2[Регион 2 active-active]
-        subgraph DC3[ЦОД 3 — основной]
+    subgraph R2[Регион 2]
+        subgraph R2DC3[ЦОД 3 — основной]
             Auth2[Auth Domain]
             Profile2[Profile Domain]
             Training2[Training Domain]
@@ -446,10 +448,11 @@ flowchart LR
             Notification2[Notification Domain]
             Analytics2[Analytics Domain]
             Commerce2[Commerce Integration Domain]
+            DeviceIntegration2[Device Integration Domain]
             Broker2[Event Broker]
         end
 
-        subgraph DC4[ЦОД 4 — резервный]
+        subgraph R2DC4[ЦОД 4 — резервный standby]
             Auth2b[Auth Domain]
             Profile2b[Profile Domain]
             Training2b[Training Domain]
@@ -459,12 +462,42 @@ flowchart LR
             Notification2b[Notification Domain]
             Analytics2b[Analytics Domain]
             Commerce2b[Commerce Integration Domain]
+            DeviceIntegration2b[Device Integration Domain]
             Broker2b[Event Broker]
         end
     end
 
-    DeviceIntegration --> Training1
-    DeviceIntegration --> Training2
+    R1_ENTRY --> Auth1
+    R1_ENTRY --> Profile1
+    R1_ENTRY --> Training1
+    R1_ENTRY --> Social1
+    R1_ENTRY --> Challenge1
+    R1_ENTRY --> Recommendation1
+    R1_ENTRY --> Notification1
+    R1_ENTRY --> Commerce1
+
+    R2_ENTRY --> Auth2
+    R2_ENTRY --> Profile2
+    R2_ENTRY --> Training2
+    R2_ENTRY --> Social2
+    R2_ENTRY --> Challenge2
+    R2_ENTRY --> Recommendation2
+    R2_ENTRY --> Notification2
+    R2_ENTRY --> Commerce2
+
+    D --> DeviceIntegration1
+    D --> DeviceIntegration2
+        
+    DeviceIntegration1 -. failover .-> DeviceIntegration1b
+    DeviceIntegration2 -. failover .-> DeviceIntegration2b
+    
+    DeviceIntegration1 --> Training1
+    DeviceIntegration2 --> Training2
+    DeviceIntegration1b --> Training1b
+    DeviceIntegration2b --> Training2b
+
+    Social1 --> Training1
+    Social2 --> Training2
 
     Training1 --> Broker1
     Social1 --> Broker1
@@ -472,6 +505,8 @@ flowchart LR
     Broker1 --> Analytics1
     Broker1 --> Recommendation1
     Broker1 --> Notification1
+    Commerce1 --> Recommendation1
+    Commerce1 --> Social1
 
     Training2 --> Broker2
     Social2 --> Broker2
@@ -479,12 +514,11 @@ flowchart LR
     Broker2 --> Analytics2
     Broker2 --> Recommendation2
     Broker2 --> Notification2
-
-    Commerce1 --> Recommendation1
     Commerce2 --> Recommendation2
+    Commerce2 --> Social2
 
-    DC1 -. failover .-> DC2
-    DC3 -. failover .-> DC4
+    R1DC1 -. failover .-> R1DC2
+    R2DC3 -. failover .-> R2DC4
 
     Auth1 <-. репликация .-> Auth2
     Profile1 <-. репликация .-> Profile2
@@ -495,22 +529,35 @@ flowchart LR
 
 ### 9.1 Пояснение к многорегиональной схеме
 
-Диаграмма выше показывает полную логическую схему multi-region архитектуры платформы Athletica. В ней отражены все основные домены системы, их событийные взаимодействия, интеграционный контур устройств, а также модель размещения по регионам и ЦОД.
+Диаграмма выше показывает полную логическую схему multi-region архитектуры платформы Athletica на уровне входных контуров, доменов, событийных взаимодействий, репликации и failover.
 
-Между регионами используется active-active модель: оба региона обслуживают пользовательский трафик и участвуют в работе системы. Это позволяет снижать задержки и повышать доступность.
+На схеме намеренно не детализируются пользовательские response-flow, так как её задача — показать архитектурные связи между подсистемами, а не последовательности отдельных запросов. Детализация пользовательских сценариев вынесена в use cases.
+
+Между регионами используется active-active модель: оба региона обслуживают пользовательский трафик и участвуют в работе системы. Это позволяет:
+
+- снижать задержки для пользователей;
+- распределять нагрузку;
+- повышать доступность;
+- поддерживать регионально-зависимые функции.
 
 Внутри каждого региона используются два ЦОД:
 
-- основной ЦОД;
-- резервный ЦОД.
+- основной ЦОД, обслуживающий рабочий трафик;
+- резервный ЦОД, используемый как standby-контур для failover внутри региона.
 
 При отказе основного ЦОД внутри региона используется failover на резервный ЦОД.
+В штатном режиме резервный ЦОД не обслуживает основной трафик, но поддерживается в готовности для быстрого переключения, включая интеграционный поток Device Integration Domain.
 
 При отказе всего региона трафик перенаправляется в другой регион с помощью Geo Routing.
 
-Критичные транзакционные данные, включая Auth Domain, Profile Domain и Training Domain, реплицируются между регионами для обеспечения низкого RPO и поддержки аварийного переключения.
+Критичные транзакционные данные, включая Auth Domain, Profile Domain и Training Domain, реплицируются между регионами для обеспечения низкого RPO и поддержки аварийного переключения. 
+При этом response-flow к пользователю на данной схеме намеренно не показывается, так как диаграмма отражает архитектурные связи и потоки взаимодействия между подсистемами.
+
+Device Integration Domain логически относится к внешнему интеграционному контуру, но физически развёрнут в каждом регионе и его резервном ЦОД, чтобы поток данных от устройств также был защищён от отказа отдельного ЦОД или региона.
 
 Event Broker синхронизирует события между регионами, а аналитические данные реплицируются асинхронно.
+
+Commerce Integration Domain участвует в поставке регионально-зависимого контента и промоакций. Recommendation Domain использует эти данные при формировании персонализированной выдачи, а Social Domain может использовать их для региональных социальных кампаний и промоматериалов.
 
 Такой подход позволяет:
 
@@ -521,9 +568,9 @@ Event Broker синхронизирует события между регион
 
 ---
 
----
-
 ## 9.2 SLA / RTO / RPO
+
+Таблица ниже описывает целевые показатели для критичных инфраструктурных и доменных компонентов. Она не перечисляет абсолютно все домены платформы, а фокусируется на тех элементах, которые напрямую влияют на доступность, восстановление и целостность данных.
 
 ### Обоснование SLA / RTO / RPO
 
@@ -544,6 +591,7 @@ Event Broker синхронизирует события между регион
 Это соответствует стратегии cost-aware scaling (масштабирование с учётом стоимости инфраструктуры).
 
 Для обеспечения управляемой отказоустойчивости и предсказуемого восстановления система Athletica определяет целевые показатели SLA, RTO и RPO.
+Ниже приведены именно целевые архитектурные значения, используемые для проектирования системы.
 
 - SLA (Service Level Agreement — уровень доступности сервиса);
 - RTO (Recovery Time Objective — целевое время восстановления);
@@ -553,14 +601,16 @@ Event Broker синхронизирует события между регион
 |----------|-----|-----|-----|-----------|
 | Geo Routing / DNS layer | 99.99% | ≤ 5 минут | 0 | критично для межрегионального переключения |
 | API Gateway | 99.9% | ≤ 5 минут | 0 | критичная точка входа |
-| Auth Domain | 99.99% | ≤ 5 минут | 0 | критичные данные пользователя |
+| Auth Domain | 99.99% | ≤ 5 минут | ≤ 1 минута | критичные данные пользователя |
 | Profile Domain | 99.9% | ≤ 10 минут | ≤ 1 минута | репликация между регионами |
 | Training Domain | 99.9% | ≤ 10 минут | ≤ 1 минута | репликация между регионами + возможна повторная отправка событий |
+| Challenge and Gamification Domain | 99.5% | ≤ 15 минут | ≤ 5 минут | допускается деградация |
+| Commerce Integration Domain | 99.5% | ≤ 15 минут | ≤ 5 минут | региональный контент и промоакции |
 | Social Domain | 99.5% | ≤ 15 минут | ≤ 5 минут | допустима деградация |
 | Recommendation Domain | 99.5% | ≤ 30 минут | ≤ 10 минут | eventual consistency |
 | Analytics Domain | 99.0% | ≤ 1 час | ≤ 15 минут | не критичен для онлайн-сценариев |
 | Notification Domain | 99.5% | ≤ 15 минут | ≤ 5 минут | возможна задержка доставки |
-| Device Integration Domain | 99.9% | ≤ 10 минут | ≤ 1 минута | поддержка retry и idempotency |
+| Device Integration Domain | 99.9% | ≤ 10 минут | ≤ 1 минута | региональное развёртывание + поддержка retry и idempotency |
 | Event Broker | 99.99% | ≤ 5 минут | 0 | гарантированная доставка событий |
 
 
@@ -570,15 +620,19 @@ Event Broker синхронизирует события между регион
 
 Архитектура сознательно спроектирована как полная multi-region модель с явным отражением всех взаимодействующих доменов, чтобы избежать скрытых компонентов и обеспечить прозрачность для проектирования, эксплуатации и защиты решения.
 
+Выбор active-active модели между регионами обусловлен тем, что платформа должна одновременно обеспечивать высокую доступность, низкие задержки для пользователей из разных регионов и поддержку регионально-зависимых бизнес-функций, включая промоакции и контент.
+
 Она ориентирована не только на текущий объём системы, но и на её развитие как глобальной цифровой платформы с поддержкой региональности, интеграций, аналитики и отказоустойчивости.
+
+В результате выбранная архитектура:
 
 - поддерживает независимое развитие направлений продукта;
 - обеспечивает масштабируемость и отказоустойчивость;
 - поддерживает асинхронные сценарии и интеграции;
 - обеспечивает безопасность и наблюдаемость;
 - поддерживает разделение транзакционного и аналитического контуров;
-- требуется поддержка региональных промоакций и регионально-зависимого контента;
-- важно обеспечить репликацию и аварийное восстановление при отказе региона или ЦОД.
+- поддерживает региональные промоакции и регионально-зависимый контент;
+- обеспечивает репликацию и аварийное восстановление при отказе региона или ЦОД.
 
 ---
 
