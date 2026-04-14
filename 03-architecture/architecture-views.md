@@ -16,6 +16,8 @@
 
 Функциональное представление описывает систему с точки зрения пользовательских и бизнес-функций, а также распределения ответственности между доменами.
 
+Система Athletica построена на основе доменного разбиения (domain-driven decomposition — разделение по бизнес-доменам). Функциональное представление фокусируется прежде всего на доменах, а также на ключевом инфраструктурном компоненте событийного взаимодействия:
+
 Система Athletica построена на основе доменного разбиения (domain-driven decomposition — разделение по бизнес-доменам) и включает следующие основные домены и инфраструктурные компоненты:
 
 - Auth Domain — регистрация, аутентификация и управление доступом;
@@ -29,6 +31,8 @@
 - Commerce Integration Domain — интеграция с внешними источниками контента и промоакций;
 - Device Integration Domain — приём и обработка данных от устройств;
 - Event Broker — событийное взаимодействие между доменами.
+
+Другие инфраструктурные компоненты системы, такие как Databases, Object Storage, Cache и Monitoring / Logging / Tracing, подробно раскрываются в информационном, инфраструктурном и security представлениях и не детализируются в функциональном представлении как самостоятельные бизнес-домены.
 
 ### Основные функциональные потоки
 
@@ -108,10 +112,13 @@ flowchart TB
 - Notification — уведомление;
 - Device Data — данные устройства;
 - Commerce Content — внешний контент и промоакции.
+- Media File — медиа-файл;
+- Backup Object — резервная копия или объект хранения;
+- Cache Entry — кэшированная запись;
 
 ### Распределение данных по доменам
 
-| Домен | Основные сущности | Тип данных | Критичность | Репликация |
+| Домен / компонент | Основные сущности | Тип данных | Критичность | Репликация |
 |------|------------------|-----------|-------------|------------|
 | Auth Domain | User / Auth Data | транзакционные | высокая | синхронная / near real-time |
 | Profile Domain | Profile | транзакционные | высокая | синхронная / near real-time |
@@ -123,6 +130,9 @@ flowchart TB
 | Notification Domain | Notification | транзакционные | средняя | асинхронная |
 | Device Integration Domain | Device Data | интеграционные | средняя | асинхронная |
 | Challenge and Gamification Domain | Challenge | транзакционные | средняя | асинхронная |
+| Databases | транзакционные данные доменов | транзакционные | высокая | межрегиональная репликация |
+| Object Storage | Media File / Backup Object | объектные | средняя | асинхронная / резервное копирование |
+| Cache | Cache Entry | кэшированные | низкая | не требуется |
 
 ### Принципы работы с данными
 
@@ -132,6 +142,9 @@ flowchart TB
 - критичные данные (Auth, Profile, Training) реплицируются между регионами;
 - аналитические данные реплицируются асинхронно;
 - данные синхронизируются через события, а не через прямой доступ.
+- транзакционные данные хранятся в отдельных Databases по стратегии Database per Service;
+- медиа-данные, файлы и резервные копии хранятся в Object Storage;
+- часто читаемые данные могут кэшироваться в Cache;
 
 ### Потоки данных
 
@@ -151,22 +164,37 @@ flowchart LR
 flowchart LR
     UserData[User / Auth Data] --> Auth[Auth Domain]
     Auth --> Profile[Profile Domain]
+    Auth --> DB[(Databases)]
+    Profile --> DB
 
     DeviceData[Device Data] --> DeviceIntegration[Device Integration Domain]
     DeviceIntegration --> Training[Training Domain]
+    Training --> DB
 
-    Training --> EventBroker[Event Broker]
     SocialPost[Social Post Data] --> Social[Social Domain]
-    Social --> EventBroker
+    Social --> DB
+    Social --> ObjectStorage[(Object Storage)]
+    Social --> EventBroker[Event Broker]
+    Social --> Training
+
+    Training --> EventBroker
+    Training --> ObjectStorage
 
     EventBroker --> Analytics[Analytics Domain]
     EventBroker --> Recommendation[Recommendation Domain]
+    EventBroker --> Notification[Notification Domain]
+
+    Analytics --> DB
+    Analytics --> ObjectStorage
+    Analytics --> Recommendation
 
     ExternalCommerce[External Commerce Systems / Promo Sources] --> Commerce[Commerce Integration Domain]
+    Commerce --> DB
     Commerce --> Recommendation
 
-    Analytics --> Recommendation
-    Training --> Recommendation
+    Recommendation --> DB
+    Recommendation --> Cache[(Cache)]
+    Profile --> Cache
 ```
 
 ### Связанные ADR и документы
@@ -194,6 +222,7 @@ flowchart LR
 - домены обрабатывают события независимо друг от друга;
 - используется idempotency (идемпотентность — повторяемость без побочных эффектов);
 - используется retry (повторные попытки выполнения);
+- для ускорения чтения может использоваться Cache, не влияющий на транзакционную консистентность доменов;
 
 ### Поток выполнения
 
@@ -248,13 +277,15 @@ flowchart LR
 
 ### Основные компоненты инфраструктуры
 
-- Geo Routing — маршрутизация пользователей;
-- API Gateway — точка входа в систему;
+- Geo Routing / DNS layer — межрегиональная маршрутизация пользователей;
+- API Gateway — точка входа пользовательского трафика;
+- Device Integration Entry — вход интеграционного трафика устройств и партнёров;
 - доменные сервисы;
 - Event Broker;
-- базы данных;
-- кэш;
-- системы мониторинга и логирования.
+- Databases;
+- Object Storage (S3-compatible);
+- Cache;
+- Monitoring / Logging / Tracing.
 
 ### Принципы
 
@@ -268,36 +299,40 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    User --> Routing[Geo Routing]
+    User --> Routing[Geo Routing / DNS]
     Device --> DeviceIngress[Device Integration Entry]
 
     Routing --> Region1
     Routing --> Region2
 
-    subgraph Region1
+    subgraph Region1[Region 1]
         DC1[Primary DC]
         DC2[Standby DC]
         DC1 -. failover .-> DC2
+        Broker1[Event Broker]
+        DB1[(Databases)]
+        S31[(Object Storage)]
+        Cache1[(Cache)]
+        Obs1[Monitoring / Logging / Tracing]
     end
 
-    subgraph Region2
+    subgraph Region2[Region 2]
         DC3[Primary DC]
         DC4[Standby DC]
         DC3 -. failover .-> DC4
+        Broker2[Event Broker]
+        DB2[(Databases)]
+        S32[(Object Storage)]
+        Cache2[(Cache)]
+        Obs2[Monitoring / Logging / Tracing]
     end
 
-    DC1 --> Broker1[Event Broker]
-    DC3 --> Broker2[Event Broker]
+    DeviceIngress --> Region1
+    DeviceIngress --> Region2
 
     Broker1 <-. sync .-> Broker2
-
-    DC1 --> DB1[(Databases)]
-    DC3 --> DB2[(Databases)]
-
     DB1 <-. replication .-> DB2
-
-    DeviceIngress --> DC1
-    DeviceIngress --> DC3
+    S31 <-. backup / replication .-> S32
 ```
 
 ### Связанные ADR и документы
@@ -306,6 +341,7 @@ flowchart TB
 - ADR-003 — Интеграционный стиль;
 - ADR-007 — Multi-region и отказоустойчивость;
 - base-architecture.md.
+- base-architecture.md (разделы по Databases, Object Storage, Cache и Monitoring / Logging / Tracing).
 
 ---
 
@@ -320,6 +356,8 @@ flowchart TB
 - используется централизованная аутентификация (Auth Domain);
 - реализована авторизация (RBAC — ролевая модель);
 - данные шифруются при передаче и хранении;
+- доступ к Databases, Object Storage и Cache ограничивается внутренним доверенным контуром;
+- доступ к объектам в Object Storage предоставляется только через контролируемые механизмы доступа;
 - выполняется валидация входных данных;
 - применяется rate limiting (ограничение частоты запросов);
 - используется защита от повторных запросов (idempotency).
@@ -336,6 +374,7 @@ flowchart TB
 - используется резервное копирование;
 - ведётся аудит действий пользователей;
 - логируются события безопасности.
+- доступ к инфраструктурным компонентам хранения и наблюдаемости изолирован от внешнего контура.
 
 ### Угрозы и защита
 
@@ -349,9 +388,9 @@ flowchart TB
 ```mermaid
 flowchart TB
     User --> Gateway[API Gateway]
-    Device --> DeviceIntegration
+    Device --> DeviceIntegration[Device Integration Entry]
 
-    Gateway --> Internal[Internal Services]
+    Gateway --> Internal[Internal Trusted Zone]
     DeviceIntegration --> Internal
 
     subgraph Internal
@@ -364,6 +403,10 @@ flowchart TB
         Analytics
         Commerce
         Challenge
+        DB[(Databases)]
+        S3[(Object Storage)]
+        Cache[(Cache)]
+        Obs[Monitoring / Logging / Tracing]
     end
 ```
 
@@ -372,3 +415,4 @@ flowchart TB
 - ADR-006 — Стратегия безопасности;
 - base-architecture.md;
 - use-cases (01–05).
+- base-architecture.md (разделы по инфраструктурным компонентам и trust boundaries).

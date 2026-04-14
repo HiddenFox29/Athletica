@@ -29,7 +29,8 @@
 - Training Domain (домен тренировок);
 - Event Broker (брокер событий);
 - Notification Domain (домен уведомлений);
-- Analytics Domain (аналитический домен).
+- Analytics Domain (аналитический домен);
+- Object Storage (S3-compatible объектное хранилище);
 
 ---
 
@@ -55,7 +56,8 @@
 6. Training Domain возвращает необходимые данные о тренировке.
 7. Social Domain:
    - формирует публикацию;
-   - сохраняет её в своей базе данных;
+   - при наличии медиа-файлов сохраняет их в Object Storage;
+   - сохраняет метаданные публикации в своей базе данных;
    - связывает публикацию с пользователем и тренировкой.
 8. Social Domain публикует событие `WorkoutPostCreated` в Event Broker.
 9. Event Broker доставляет событие сервисам-подписчикам.
@@ -136,6 +138,7 @@
 - публикация результата реализуется как транзакция в Social Domain с последующей асинхронной fan-out обработкой (распространение события на несколько подписчиков);
 - уведомления и аналитика обновляются асинхронно и не блокируют пользовательский ответ;
 - данные Social Domain и Training Domain разделены согласно стратегии Database per Service (отдельная база данных на сервис);
+- медиа-данные публикаций выносятся в Object Storage (S3-compatible) и не хранятся в транзакционной базе данных;
 - внешнее взаимодействие осуществляется через защищённые протоколы HTTPS (защищённый HTTP) и TLS (Transport Layer Security — протокол шифрования транспортного уровня).
 
 Связанные ADR:
@@ -164,6 +167,7 @@ sequenceDiagram
     participant Broker as Event Broker
     participant Notification as Notification Domain
     participant Analytics as Analytics Domain
+    participant S3 as Object Storage
 
     User->>Client: Выбирает тренировку
     Client->>Gateway: POST /social/posts
@@ -184,6 +188,7 @@ sequenceDiagram
             Gateway-->>Client: Сервис временно недоступен
         else OK
             Training-->>Social: Данные тренировки
+            Social->>S3: Сохраняет медиа (если есть)
             Social->>Social: Создаёт публикацию
 
             alt Ошибка запроса
