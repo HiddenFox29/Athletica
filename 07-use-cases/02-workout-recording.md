@@ -27,7 +27,7 @@
 - Auth Domain (домен аутентификации);
 - Training Domain (домен тренировок);
 - Device Integration Domain (домен интеграции устройств);
-- Event Broker (брокер событий);
+- Event Broker (RabbitMQ — брокер сообщений);
 - Analytics Domain (аналитический домен);
 - Recommendation Domain (домен рекомендаций).
 
@@ -47,9 +47,9 @@
 
 1. Пользователь завершает тренировку или устройство формирует данные о тренировке.
 2. Если данные отправляются клиентским приложением:
-   - клиент передаёт запрос через API Gateway в Training Domain;
+   - клиент передаёт запрос через NGINX (ingress — входной контур) в API Gateway, который маршрутизирует его в Training Domain;
    - API Gateway выполняет аутентификацию и авторизацию в Auth Domain.
-3. Если данные поступают от устройства, они сначала передаются в Device Integration Domain.
+3. Если данные поступают от устройства, они сначала передаются через NGINX (ingress — входной контур) в Device Integration Domain.
 4. Device Integration Domain:
    - принимает входящие данные устройства;
    - валидирует и нормализует формат;
@@ -59,8 +59,8 @@
    - валидирует входные данные;
    - нормализует формат;
    - сохраняет тренировку в своей базе данных.
-6. Training Domain публикует событие `WorkoutCompleted` в Event Broker.
-7. Event Broker доставляет событие сервисам-подписчикам.
+6. Training Domain публикует событие `WorkoutCompleted` в Event Broker (RabbitMQ).
+7. Event Broker (RabbitMQ) доставляет событие сервисам-подписчикам.
 8. Analytics Domain:
    - принимает событие;
    - обновляет агрегированные показатели.
@@ -104,7 +104,7 @@
 
 - событие может быть повторно отправлено (retry);
 - используется механизм гарантированной доставки (at-least-once delivery — как минимум одна доставка);
-- система остаётся согласованной в конечном итоге (eventual consistency — согласованность в конечном итоге).
+- система остаётся согласованной с задержкой (eventual consistency — согласованность с задержкой).
 
 ---
 
@@ -121,7 +121,7 @@
 ## Постусловия
 
 - данные тренировки сохранены в Training Domain;
-- событие опубликовано в Event Broker;
+- событие опубликовано в Event Broker (RabbitMQ);
 - аналитические агрегаты обновлены асинхронно;
 - рекомендации могут быть обновлены.
 
@@ -131,8 +131,9 @@
 
 Сценарий подтверждает следующие решения:
 
+- внешний пользовательский и интеграционный трафик проходит через NGINX (ingress — входной контур), который направляет клиентские запросы в API Gateway, а device-трафик — в Device Integration Domain;
 - разделение транзакционного и аналитического контуров (ADR-004);
-- использование Event Broker для асинхронной обработки (ADR-003);
+- использование Event Broker (RabbitMQ) для асинхронной обработки (ADR-003);
 - независимое масштабирование доменов (ADR-007);
 - централизованная аутентификация (ADR-006);
 - запрещён прямой доступ к базе данных другого домена (no cross DB access — запрет прямого доступа к чужой базе данных).
@@ -155,17 +156,19 @@ sequenceDiagram
     autonumber
     participant User as Пользователь
     participant Client as Клиент
+    participant NGINX as NGINX (ingress)
     participant Gateway as API Gateway
     participant Auth as Auth Domain
     participant Device as Device Integration Domain
     participant Training as Training Domain
-    participant Broker as Event Broker
+    participant Broker as RabbitMQ
     participant Analytics as Analytics Domain
     participant Rec as Recommendation Domain
 
     alt Данные отправляет клиент
         User->>Client: Завершает тренировку
-        Client->>Gateway: POST /workouts
+        Client->>NGINX: POST /workouts
+        NGINX->>Gateway: Route request
 
         Gateway->>Auth: Проверка токена
         alt Ошибка аутентификации
@@ -195,6 +198,8 @@ sequenceDiagram
 
     else Данные поступают от устройства
         User->>Device: Устройство отправляет данные
+        Device->>NGINX: HTTPS request
+        NGINX->>Device: Route to Device Integration Domain
         Device->>Device: Валидация и нормализация
         Device->>Training: Передаёт данные
         Training->>Training: Сохранение

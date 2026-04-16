@@ -4,7 +4,7 @@
 
 Сценарий описывает процесс публикации пользователем результата тренировки в социальную ленту платформы Athletica с последующей доставкой уведомлений подписчикам и обновлением социальной активности.
 
-Сценарий объединяет транзакционный пользовательский запрос и асинхронную обработку событий, поэтому хорошо демонстрирует совместную работу API (интерфейс программирования приложений) и Event Broker (брокер событий).
+Сценарий объединяет транзакционный пользовательский запрос и асинхронную обработку событий, поэтому хорошо демонстрирует совместную работу API (интерфейс программирования приложений), API Gateway (шлюз API) и Event Broker (RabbitMQ — брокер сообщений).
 
 ---
 
@@ -27,7 +27,7 @@
 - Auth Domain (домен аутентификации);
 - Social Domain (домен социальных взаимодействий);
 - Training Domain (домен тренировок);
-- Event Broker (брокер событий);
+- Event Broker (RabbitMQ — брокер сообщений);
 - Notification Domain (домен уведомлений);
 - Analytics Domain (аналитический домен);
 - Object Storage (S3-compatible объектное хранилище);
@@ -46,8 +46,8 @@
 ## Основной поток
 
 1. Пользователь выбирает завершённую тренировку и инициирует публикацию результата.
-2. Клиент отправляет запрос через API Gateway в Social Domain.
-3. API Gateway:
+2. Клиент отправляет запрос через NGINX (ingress — входной контур) в API Gateway, который маршрутизирует его в Social Domain.
+3. API Gateway (шлюз API):
    - выполняет проверку токена в Auth Domain;
    - при успешной аутентификации передаёт запрос дальше;
    - при ошибке аутентификации отклоняет запрос.
@@ -59,8 +59,8 @@
    - при наличии медиа-файлов сохраняет их в Object Storage;
    - сохраняет метаданные публикации в своей базе данных;
    - связывает публикацию с пользователем и тренировкой.
-8. Social Domain публикует событие `WorkoutPostCreated` в Event Broker.
-9. Event Broker доставляет событие сервисам-подписчикам.
+8. Social Domain публикует событие `WorkoutPostCreated` в Event Broker (RabbitMQ).
+9. Event Broker (RabbitMQ) доставляет событие сервисам-подписчикам.
 ---
 
 ### A5. Ошибка доступа к тренировке
@@ -113,7 +113,7 @@
 - публикация остаётся сохранённой в Social Domain;
 - Event Broker выполняет повторную доставку события;
 - уведомления и аналитика обновляются асинхронно;
-- система сохраняет eventual consistency (согласованность в конечном итоге).
+- система сохраняет eventual consistency (согласованность с задержкой).
 
 ---
 
@@ -133,7 +133,8 @@
 
 Сценарий подтверждает следующие архитектурные решения:
 
-- взаимодействие между доменами выполняется через API и Event Broker согласно ADR-003;
+- взаимодействие между доменами выполняется через API (через API Gateway) и Event Broker (RabbitMQ) согласно ADR-003;
+ - внешний пользовательский трафик проходит через NGINX (ingress — входной контур), который направляет запросы в API Gateway;
 - Social Domain не имеет прямого доступа к данным Training Domain и получает данные только через контракт взаимодействия;
 - публикация результата реализуется как транзакция в Social Domain с последующей асинхронной fan-out обработкой (распространение события на несколько подписчиков);
 - уведомления и аналитика обновляются асинхронно и не блокируют пользовательский ответ;
@@ -160,17 +161,19 @@ sequenceDiagram
     autonumber
     participant User as Пользователь
     participant Client as Клиент
+    participant NGINX as NGINX (ingress)
     participant Gateway as API Gateway
     participant Auth as Auth Domain
     participant Social as Social Domain
     participant Training as Training Domain
-    participant Broker as Event Broker
+    participant Broker as RabbitMQ
     participant Notification as Notification Domain
     participant Analytics as Analytics Domain
     participant S3 as Object Storage
 
     User->>Client: Выбирает тренировку
-    Client->>Gateway: POST /social/posts
+    Client->>NGINX: POST /social/posts
+    NGINX->>Gateway: Route request
 
     Gateway->>Auth: Проверка токена
     alt Ошибка аутентификации

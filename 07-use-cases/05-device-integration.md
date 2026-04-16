@@ -6,7 +6,7 @@
 
 Сценарий описывает процесс приёма, валидации и обработки данных тренировок, поступающих от внешних устройств (wearables — носимые устройства) и интеграционных партнёров.
 
-Сценарий демонстрирует отдельный входной контур (ingestion — приём данных), отличающийся от клиентского API, и последующую асинхронную обработку через Event Broker (брокер событий).
+Сценарий демонстрирует отдельный входной контур (ingestion — приём данных), отличающийся от клиентского API, и последующую асинхронную обработку через Event Broker (RabbitMQ — брокер сообщений).
 
 ---
 
@@ -27,7 +27,7 @@
 - Устройство / Партнёр (внешний источник данных);
 - Device Integration Domain (домен интеграции устройств);
 - Training Domain (домен тренировок);
-- Event Broker (брокер событий);
+- Event Broker (RabbitMQ — брокер сообщений);
 - Analytics Domain (аналитический домен);
 - Recommendation Domain (домен рекомендаций);
 
@@ -48,7 +48,7 @@
 ## Основной поток
 
 1. Устройство или партнёр формирует пакет данных о тренировке.
-2. Источник отправляет данные в Device Integration Domain.
+2. Источник отправляет данные через NGINX (ingress — входной контур) в Device Integration Domain.
 3. Device Integration Domain:
    - аутентифицирует источник (по ключу/подписи/сертификату);
    - проверяет доверенность интеграции;
@@ -58,8 +58,8 @@
 5. Training Domain:
    - валидирует доменные ограничения;
    - сохраняет тренировку в своей базе данных.
-6. Training Domain публикует событие `WorkoutCompleted` в Event Broker.
-7. Event Broker доставляет событие сервисам-подписчикам.
+6. Training Domain публикует событие `WorkoutCompleted` в Event Broker (RabbitMQ).
+7. Event Broker (RabbitMQ) доставляет событие сервисам-подписчикам.
 8. Analytics Domain:
    - принимает событие;
    - обновляет агрегированные показатели.
@@ -106,7 +106,7 @@
 
 - используется механизм повторной доставки (retry);
 - применяется стратегия at-least-once delivery (как минимум одна доставка);
-- система достигает eventual consistency (согласованность в конечном итоге).
+- система достигает eventual consistency (согласованность с задержкой).
 
 ---
 
@@ -123,7 +123,7 @@
 ## Постусловия
 
 - данные тренировки сохранены в Training Domain;
-- событие опубликовано в Event Broker;
+- событие опубликовано в Event Broker (RabbitMQ);
 - аналитика обновлена или поставлена в асинхронную обработку;
 - рекомендации могут быть обновлены;
 - система остаётся консистентной на уровне eventual consistency.
@@ -136,7 +136,8 @@
 
 - наличие отдельного ingestion-контура для внешних устройств;
 - разграничение аутентификации: устройства используют интеграционную аутентификацию, отличную от пользовательской (Auth Domain);
-- использование Event Broker для асинхронной обработки (ADR-003);
+- использование Event Broker (RabbitMQ) для асинхронной обработки (ADR-003);
+ - внешний интеграционный трафик устройств проходит через NGINX (ingress — входной контур), который направляет его в Device Integration Domain;
 - разделение доменов и хранение данных по стратегии Database per Service (ADR-004);
 - запрещён прямой доступ к базе данных другого домена (no cross DB access — запрет прямого доступа к чужой базе данных);
 - поддерживается идемпотентность (idempotency — свойство повторного выполнения без изменения результата) и дедупликация для устойчивости интеграций;
@@ -161,13 +162,15 @@
 sequenceDiagram
     autonumber
     participant Device as Устройство/Партнёр
+    participant NGINX as NGINX (ingress)
     participant Integration as Device Integration Domain
     participant Training as Training Domain
-    participant Broker as Event Broker
+    participant Broker as RabbitMQ
     participant Analytics as Analytics Domain
     participant Rec as Recommendation Domain
 
-    Device->>Integration: Отправляет данные тренировки
+    Device->>NGINX: HTTPS request
+    NGINX->>Integration: Route request
 
     Integration->>Integration: Аутентификация и проверка доверенности
 

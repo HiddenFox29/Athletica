@@ -30,7 +30,7 @@
 - Analytics Domain — сбор и анализ данных;
 - Commerce Integration Domain — интеграция с внешними источниками контента и промоакций;
 - Device Integration Domain — приём и обработка данных от устройств;
-- Event Broker — событийное взаимодействие между доменами.
+- Event Broker (RabbitMQ — брокер сообщений) — событийное взаимодействие между доменами.
 
 Другие инфраструктурные компоненты системы, такие как Databases, Object Storage, Cache и Monitoring / Logging / Tracing, подробно раскрываются в информационном, инфраструктурном и security представлениях и не детализируются в функциональном представлении как самостоятельные бизнес-домены.
 
@@ -40,10 +40,10 @@
    Auth → Profile
 
 2. Запись тренировки:
-   Device Integration → Training → Event Broker → Analytics / Recommendation
+   Device Integration → Training → Event Broker (RabbitMQ) → Analytics / Recommendation
 
 3. Публикация поста:
-   Social → Training → Event Broker → Notification / Analytics
+   Social → Training → Event Broker (RabbitMQ) → Notification / Analytics
 
 4. Генерация рекомендаций:
    Analytics + Training + Commerce → Recommendation
@@ -64,14 +64,16 @@ flowchart TB
     Workout --> DeviceIntegration[Device Integration Domain]
     DeviceIntegration --> Training[Training Domain]
     Training --> WorkoutEvent[Workout Event]
-    WorkoutEvent --> Analytics[Analytics Domain]
-    WorkoutEvent --> Recommendation[Recommendation Domain]
+    WorkoutEvent --> RabbitMQ
+    RabbitMQ --> Analytics[Analytics Domain]
+    RabbitMQ --> Recommendation[Recommendation Domain]
 
     Post --> Social[Social Domain]
     Social --> Training
     Social --> PostEvent[Post Event]
-    PostEvent --> Notification[Notification Domain]
-    PostEvent --> Analytics
+    PostEvent --> RabbitMQ
+    RabbitMQ --> Notification[Notification Domain]
+    RabbitMQ --> Analytics
 
     Reco --> Analytics
     Reco --> Training
@@ -81,7 +83,7 @@ flowchart TB
     Commerce --> Recommendation
 ```
 
-Транзакционные пользовательские действия завершаются внутри соответствующих доменов (например, Auth, Profile, Training), после чего инициируются асинхронные события. Обработка таких событий выполняется через Event Broker и может приводить к параллельной обработке в нескольких доменах (например, Analytics и Recommendation).
+Транзакционные пользовательские действия завершаются внутри соответствующих доменов (например, Auth, Profile, Training), после чего инициируются асинхронные события. Обработка таких событий выполняется через Event Broker (RabbitMQ) и может приводить к параллельной обработке в нескольких доменах (например, Analytics и Recommendation).
 
 ### Связанные ADR и документы
 
@@ -130,9 +132,9 @@ flowchart TB
 | Notification Domain | Notification | транзакционные | средняя | асинхронная |
 | Device Integration Domain | Device Data | интеграционные | средняя | асинхронная |
 | Challenge and Gamification Domain | Challenge | транзакционные | средняя | асинхронная |
-| Databases | транзакционные данные доменов | транзакционные | высокая | межрегиональная репликация |
-| Object Storage | Media File / Backup Object | объектные | средняя | асинхронная / резервное копирование |
-| Cache | Cache Entry | кэшированные | низкая | не требуется |
+| PostgreSQL | транзакционные данные доменов | транзакционные | высокая | межрегиональная репликация |
+| Object Storage (S3-compatible) | Media File / Backup Object | объектные | средняя | асинхронная / резервное копирование |
+| Cache (кэш) | Cache Entry | кэшированные | низкая | не требуется |
 
 ### Принципы работы с данными
 
@@ -142,7 +144,7 @@ flowchart TB
 - критичные данные (Auth, Profile, Training) реплицируются между регионами;
 - аналитические данные реплицируются асинхронно;
 - данные синхронизируются через события, а не через прямой доступ.
-- транзакционные данные хранятся в отдельных Databases по стратегии Database per Service;
+- транзакционные данные хранятся в отдельных PostgreSQL (реляционная СУБД — система управления базами данных);
 - медиа-данные, файлы и резервные копии хранятся в Object Storage;
 - часто читаемые данные могут кэшироваться в Cache;
 
@@ -153,9 +155,9 @@ flowchart TB
 flowchart LR
     DeviceData --> DeviceIntegration
     DeviceIntegration --> Training
-    Training --> EventBroker
-    EventBroker --> Analytics
-    EventBroker --> Recommendation
+    Training --> RabbitMQ
+    RabbitMQ --> Analytics
+    RabbitMQ --> Recommendation
 ```
 
 ### Общая схема информационных потоков
@@ -164,35 +166,35 @@ flowchart LR
 flowchart LR
     UserData[User / Auth Data] --> Auth[Auth Domain]
     Auth --> Profile[Profile Domain]
-    Auth --> DB[(Databases)]
-    Profile --> DB
+    Auth --> PostgreSQL[PostgreSQL]
+    Profile --> PostgreSQL
 
     DeviceData[Device Data] --> DeviceIntegration[Device Integration Domain]
     DeviceIntegration --> Training[Training Domain]
-    Training --> DB
+    Training --> PostgreSQL
 
     SocialPost[Social Post Data] --> Social[Social Domain]
-    Social --> DB
-    Social --> ObjectStorage[(Object Storage)]
-    Social --> EventBroker[Event Broker]
+    Social --> PostgreSQL
+    Social --> ObjectStorage[Object Storage S3]
+    Social --> RabbitMQ[RabbitMQ]
     Social --> Training
 
-    Training --> EventBroker
+    Training --> RabbitMQ
     Training --> ObjectStorage
 
-    EventBroker --> Analytics[Analytics Domain]
-    EventBroker --> Recommendation[Recommendation Domain]
-    EventBroker --> Notification[Notification Domain]
+    RabbitMQ --> Analytics[Analytics Domain]
+    RabbitMQ --> Recommendation[Recommendation Domain]
+    RabbitMQ --> Notification[Notification Domain]
 
-    Analytics --> DB
+    Analytics --> PostgreSQL
     Analytics --> ObjectStorage
     Analytics --> Recommendation
 
     ExternalCommerce[External Commerce Systems / Promo Sources] --> Commerce[Commerce Integration Domain]
-    Commerce --> DB
+    Commerce --> PostgreSQL
     Commerce --> Recommendation
 
-    Recommendation --> DB
+    Recommendation --> PostgreSQL
     Recommendation --> Cache[(Cache)]
     Profile --> Cache
 ```
@@ -218,7 +220,7 @@ flowchart LR
 ### Основные принципы
 
 - обработка пользовательских запросов выполняется синхронно;
-- тяжёлые операции выполняются асинхронно через Event Broker;
+- тяжёлые операции выполняются асинхронно через RabbitMQ (брокер сообщений);
 - домены обрабатывают события независимо друг от друга;
 - используется idempotency (идемпотентность — повторяемость без побочных эффектов);
 - используется retry (повторные попытки выполнения);
@@ -229,22 +231,24 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant User
-    participant API
+    participant NGINX
+    participant APIGateway
     participant Training
-    participant Broker
+    participant RabbitMQ
     participant Analytics
 
-    User->>API: Создание тренировки
-    API->>Training: Сохранение данных
-    Training->>Broker: Публикация события
-    Broker->>Analytics: Асинхронная обработка
+    User->>NGINX: HTTP request
+    NGINX->>APIGateway: Route request
+    APIGateway->>Training: Сохранение данных
+    Training->>RabbitMQ: Публикация события
+    RabbitMQ->>Analytics: Асинхронная обработка
 ```
 
 ### Параллельная обработка событий
 
 ```mermaid
 flowchart LR
-    Event[Event Broker]
+    Event[RabbitMQ брокер сообщений]
     Event --> Analytics[Analytics Domain]
     Event --> Recommendation[Recommendation Domain]
     Event --> Notification[Notification Domain]
@@ -278,11 +282,12 @@ flowchart LR
 ### Основные компоненты инфраструктуры
 
 - Geo Routing / DNS layer — межрегиональная маршрутизация пользователей;
-- API Gateway — точка входа пользовательского трафика;
-- Device Integration Entry — вход интеграционного трафика устройств и партнёров;
+- NGINX — ingress (входной контур), reverse proxy (обратный прокси) и балансировщик нагрузки;
+- API Gateway — слой публикации и маршрутизации клиентских API (mobile и web);
+- Device Integration Domain — обработка интеграционного трафика устройств и партнёров;
 - доменные сервисы;
-- Event Broker;
-- Databases;
+- RabbitMQ (брокер сообщений);
+- PostgreSQL;
 - Object Storage (S3-compatible);
 - Cache;
 - Monitoring / Logging / Tracing.
@@ -300,19 +305,25 @@ flowchart LR
 ```mermaid
 flowchart TB
     User --> Routing[Geo Routing / DNS]
-    Device --> DeviceIngress[Device Integration Entry]
+    Device --> Routing
 
-    Routing --> Region1
-    Routing --> Region2
+    Routing --> NGINX1[NGINX Region 1]
+    Routing --> NGINX2[NGINX Region 2]
+
+    NGINX1 --> APIGW1[API Gateway Region 1]
+    NGINX2 --> APIGW2[API Gateway Region 2]
+
+    NGINX1 --> DeviceIntegration1[Device Integration Domain]
+    NGINX2 --> DeviceIntegration2[Device Integration Domain]
 
     subgraph Region1[Region 1]
         DC1[Primary DC]
         DC2[Standby DC]
         DC1 -. failover .-> DC2
-        Broker1[Event Broker]
-        DB1[(Databases)]
-        S31[(Object Storage)]
-        Cache1[(Cache)]
+        RabbitMQ1[RabbitMQ]
+        DB1[PostgreSQL]
+        S31[Object Storage S3]
+        Cache1[Cache]
         Obs1[Monitoring / Logging / Tracing]
     end
 
@@ -320,17 +331,14 @@ flowchart TB
         DC3[Primary DC]
         DC4[Standby DC]
         DC3 -. failover .-> DC4
-        Broker2[Event Broker]
-        DB2[(Databases)]
-        S32[(Object Storage)]
-        Cache2[(Cache)]
+        RabbitMQ2[RabbitMQ]
+        DB2[PostgreSQL]
+        S32[Object Storage S3]
+        Cache2[Cache]
         Obs2[Monitoring / Logging / Tracing]
     end
 
-    DeviceIngress --> Region1
-    DeviceIngress --> Region2
-
-    Broker1 <-. sync .-> Broker2
+    RabbitMQ1 <-. sync .-> RabbitMQ2
     DB1 <-. replication .-> DB2
     S31 <-. backup / replication .-> S32
 ```
@@ -356,7 +364,7 @@ flowchart TB
 - используется централизованная аутентификация (Auth Domain);
 - реализована авторизация (RBAC — ролевая модель);
 - данные шифруются при передаче и хранении;
-- доступ к Databases, Object Storage и Cache ограничивается внутренним доверенным контуром;
+- доступ к PostgreSQL, Object Storage и Cache ограничивается внутренним доверенным контуром;
 - доступ к объектам в Object Storage предоставляется только через контролируемые механизмы доступа;
 - выполняется валидация входных данных;
 - применяется rate limiting (ограничение частоты запросов);
@@ -364,7 +372,7 @@ flowchart TB
 
 ### Разделение доступа
 
-- пользовательский доступ — через API Gateway;
+- пользовательский доступ — через NGINX и API Gateway;
 - внутренние сервисы — через защищённый контур;
 - устройства — через Device Integration Domain.
 
@@ -387,8 +395,10 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    User --> Gateway[API Gateway]
-    Device --> DeviceIntegration[Device Integration Entry]
+    User --> Gateway[NGINX]
+    Gateway --> APIGateway[API Gateway]
+    Device --> Gateway
+    Gateway --> DeviceIntegration[Device Integration Domain]
 
     Gateway --> Internal[Internal Trusted Zone]
     DeviceIntegration --> Internal
@@ -403,9 +413,9 @@ flowchart TB
         Analytics
         Commerce
         Challenge
-        DB[(Databases)]
-        S3[(Object Storage)]
-        Cache[(Cache)]
+        DB[PostgreSQL]
+        S3[Object Storage]
+        Cache[Cache]
         Obs[Monitoring / Logging / Tracing]
     end
 ```
