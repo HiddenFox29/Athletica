@@ -23,12 +23,13 @@
 
 - Пользователь;
 - Client (мобильное или веб-приложение);
+- NGINX (ingress — входной контур);
 - API Gateway (шлюз API);
 - Auth Domain (домен аутентификации);
 - Recommendation Domain (домен рекомендаций);
 - Analytics Domain (аналитический домен);
 - Training Domain (домен тренировок);
-- Event Broker (брокер событий).
+- Event Broker (RabbitMQ — брокер сообщений).
 
 ---
 
@@ -37,7 +38,7 @@
 - пользователь зарегистрирован в системе;
 - в системе есть данные о тренировках пользователя;
 - аналитические агрегаты доступны;
-- Event Broker функционирует;
+- Event Broker (RabbitMQ) функционирует;
 - соблюдены требования безопасности (HTTPS/TLS для внешних вызовов).
 
 ---
@@ -47,8 +48,8 @@
 ### Часть 1. Генерация рекомендаций (асинхронно)
 
 1. Пользователь выполняет действия (например, завершает тренировку).
-2. Training Domain публикует событие `WorkoutCompleted` в Event Broker.
-3. Event Broker доставляет событие сервисам-подписчикам.
+2. Training Domain публикует событие `WorkoutCompleted` в Event Broker (RabbitMQ).
+3. Event Broker (RabbitMQ) доставляет событие сервисам-подписчикам.
 4. Analytics Domain:
    - принимает событие;
    - обновляет агрегированные показатели пользователя.
@@ -66,7 +67,7 @@
 ### Часть 2. Получение рекомендаций (синхронно)
 
 1. Пользователь открывает экран рекомендаций.
-2. Client отправляет запрос через API Gateway.
+2. Client отправляет запрос через NGINX (ingress — входной контур) в API Gateway.
 3. API Gateway выполняет аутентификацию через Auth Domain.
 4. API Gateway передаёт запрос в Recommendation Domain.
 5. Recommendation Domain возвращает готовые рекомендации.
@@ -108,7 +109,7 @@
 Если аналитические данные ещё не обработаны:
 
 - пользователь получает предыдущую версию рекомендаций;
-- система остаётся согласованной в конечном итоге (eventual consistency — согласованность в конечном итоге);
+- система остаётся согласованной с задержкой (eventual consistency — согласованность с задержкой);
 - новые рекомендации появятся после обработки событий.
 
 ---
@@ -127,7 +128,7 @@
 - рекомендации сформированы и сохранены;
 - пользователь получает актуальные или последние доступные рекомендации;
 - аналитические данные обновлены или поставлены в асинхронную обработку;
-- система остаётся консистентной на уровне eventual consistency.
+- система остаётся консистентной на уровне eventual consistency (согласованность с задержкой).
 
 ---
 
@@ -136,7 +137,8 @@
 Сценарий подтверждает следующие решения:
 
 - разделение транзакционного и аналитического контуров (ADR-004);
-- использование Event Broker для асинхронной обработки (ADR-003);
+- внешний пользовательский трафик проходит через NGINX (ingress — входной контур), который направляет запросы в API Gateway;
+- использование Event Broker (RabbitMQ) для асинхронной обработки (ADR-003);
 - отсутствие блокировки пользовательских запросов аналитикой;
 - хранение рекомендаций отдельно от транзакционных данных;
 - запрещён прямой доступ к базе данных другого домена (no cross DB access — запрет прямого доступа к чужой базе данных);
@@ -162,10 +164,11 @@ sequenceDiagram
     autonumber
     participant User as Пользователь
     participant Client as Клиент
+    participant NGINX as NGINX (ingress)
     participant Gateway as API Gateway
     participant Auth as Auth Domain
     participant Training as Training Domain
-    participant Broker as Event Broker
+    participant Broker as RabbitMQ
     participant Analytics as Analytics Domain
     participant Rec as Recommendation Domain
 
@@ -180,7 +183,8 @@ sequenceDiagram
     Note over User,Rec: Получение рекомендаций
 
     User->>Client: Открывает экран рекомендаций
-    Client->>Gateway: GET /recommendations
+    Client->>NGINX: GET /recommendations
+    NGINX->>Gateway: Route request
 
     Gateway->>Auth: Проверка токена
     alt Ошибка аутентификации

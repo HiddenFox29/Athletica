@@ -22,6 +22,7 @@
 ## Участники
 
 - Пользователь;
+- NGINX (ingress — входной контур);
 - API Gateway (шлюз API);
 - Auth Domain (домен аутентификации);
 - Profile Domain (домен профиля пользователя).
@@ -43,7 +44,7 @@
 
 1. Пользователь открывает экран регистрации.
 2. Пользователь вводит регистрационные данные.
-3. Клиентское приложение отправляет запрос на регистрацию через API Gateway.
+3. Клиентское приложение отправляет запрос на регистрацию через NGINX (ingress — входной контур) в API Gateway.
 4. API Gateway передаёт запрос в Auth Domain.
 5. Auth Domain:
    - валидирует данные;
@@ -57,7 +58,7 @@
 ### Часть 2. Вход в систему
 
 1. Пользователь вводит данные для входа.
-2. Клиентское приложение отправляет запрос через API Gateway.
+2. Клиентское приложение отправляет запрос через NGINX (ingress — входной контур) в API Gateway.
 3. API Gateway передаёт запрос в Auth Domain.
 4. Auth Domain:
    - проверяет учётные данные;
@@ -113,7 +114,7 @@
 
 - аутентификация централизована в Auth Domain;
 - профиль пользователя отделён от домена аутентификации;
-- взаимодействие между клиентом и доменами выполняется через API Gateway;
+- внешний пользовательский трафик проходит через NGINX (ingress — входной контур), который направляет запросы в API Gateway;
 - данные Auth Domain и Profile Domain разделены согласно стратегии Database per Service (отдельная база данных на сервис);
 - доступ к данным другого домена напрямую запрещён;
 - для внешнего взаимодействия используются защищённые протоколы HTTPS (защищённый HTTP) и TLS (Transport Layer Security — протокол шифрования транспортного уровня).
@@ -135,13 +136,15 @@ sequenceDiagram
     autonumber
     participant User as Пользователь
     participant Client as Мобильное или веб приложение
+    participant NGINX as NGINX (ingress)
     participant Gateway as API Gateway
     participant Auth as Auth Domain
     participant Profile as Profile Domain
 
     User->>Client: Открывает экран регистрации
     User->>Client: Вводит регистрационные данные
-    Client->>Gateway: POST /auth/register
+    Client->>NGINX: POST /auth/register
+    NGINX->>Gateway: Route request
     Gateway->>Auth: Передаёт запрос на регистрацию
     Auth->>Auth: Валидирует данные
 
@@ -165,7 +168,8 @@ sequenceDiagram
     end
 
     User->>Client: Вводит данные для входа
-    Client->>Gateway: POST /auth/login
+    Client->>NGINX: POST /auth/login
+    NGINX->>Gateway: Route request
     Gateway->>Auth: Передаёт запрос на вход
     Auth->>Auth: Проверяет учётные данные
 

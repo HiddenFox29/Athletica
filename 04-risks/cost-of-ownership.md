@@ -7,7 +7,8 @@
 - PostgreSQL (базы данных);
 - Object Storage (объектное хранилище, S3-compatible);
 - Cache (кэш);
-- Network и NGINX Load Balancer / API Gateway (сеть и балансировка);
+- Network и NGINX Load Balancer (сеть и балансировка);
+- API Gateway (шлюз API);
 - Monitoring / Logging / Tracing (наблюдаемость).
 
 ---
@@ -20,12 +21,12 @@
 - EC2 (Compute): https://aws.amazon.com/ec2/pricing/
 - RDS (Database): https://aws.amazon.com/rds/pricing/
 - S3 (Object Storage): https://aws.amazon.com/s3/pricing/
+- AWS RabbitMQ (Amazon MQ for RabbitMQ): https://aws.amazon.com/amazon-mq/pricing/
 
 ### Yandex Cloud
 - Compute Cloud: https://yandex.cloud/ru/docs/compute/pricing
 - Managed PostgreSQL: https://yandex.cloud/ru/docs/managed-postgresql/pricing
 - Object Storage: https://yandex.cloud/ru/docs/storage/pricing
-- AWS RabbitMQ (Amazon MQ for RabbitMQ): https://aws.amazon.com/amazon-mq/pricing/
 - Yandex Cloud Managed Service for RabbitMQ: https://yandex.cloud/ru/docs/managed-rabbitmq/pricing
 
 Цены приведены ориентировочно на основе публичных тарифов (on-demand — по требованию, без резервирования).
@@ -48,7 +49,8 @@
 - использование RabbitMQ как брокера событий;
 - использование Cache;
 - использование Object Storage для медиа и файлов;
-- использование NGINX как API Gateway и балансировщика.
+- использование NGINX как ingress (входной контур) и балансировщика;
+- использование API Gateway как слоя клиентских API.
 
 ---
 
@@ -94,13 +96,26 @@ Yandex Cloud:
 
 ---
 
-### 3.5 Network и NGINX балансировка
+### 3.5 Network и NGINX (ingress и балансировка)
 
 AWS:
 - Load Balancer (~$20–50/мес)
 
 Yandex Cloud:
 - Балансировщик (~$15–40/мес)
+
+---
+
+### 3.6 API Gateway (шлюз API)
+
+AWS:
+- может быть реализован через API Gateway или как отдельные сервисы на EC2 (~$20–100/мес в зависимости от нагрузки)
+
+Yandex Cloud:
+- может быть реализован как отдельные сервисы (на Compute Cloud) (~$20–80/мес)
+
+Примечание:
+API Gateway может быть реализован как логический слой внутри compute-инстансов, поэтому его стоимость частично входит в Compute.
 
 ---
 
@@ -127,7 +142,9 @@ Yandex Cloud:
 
 Итого:
 ~ $400 / месяц
+(включая API Gateway как часть compute-слоя)
 ~ $4 800 / год
+(включая API Gateway как часть compute-слоя)
 
 ---
 
@@ -142,7 +159,9 @@ Yandex Cloud:
 
 Итого:
 ~ $930 / месяц
+(включая API Gateway как часть compute-слоя)
 ~ $11 160 / год
+(включая API Gateway как часть compute-слоя)
 
 ---
 
@@ -157,7 +176,9 @@ Yandex Cloud:
 
 Итого:
 ~ $2 800 / месяц
+(включая API Gateway как часть compute-слоя)
 ~ $33 600 / год
+(включая API Gateway как часть compute-слоя)
 
 ---
 
@@ -171,6 +192,7 @@ Yandex Cloud:
 | Cache | выше | немного дешевле |
 | RabbitMQ | выше | немного дешевле или сопоставимо |
 | Network + NGINX | выше | дешевле |
+| API Gateway | выше (managed сервисы) | ниже (self-hosted) |
 
 Вывод:
 - Yandex Cloud может быть дешевле на ранних этапах;
@@ -187,7 +209,8 @@ Yandex Cloud:
 - event-driven требует RabbitMQ и дополнительной инфраструктуры;
 - multi-region увеличивает стоимость почти в 2 раза;
 - использование Object Storage снижает нагрузку на PostgreSQL;
-- использование Cache снижает нагрузку на compute и PostgreSQL.
+- использование Cache снижает нагрузку на compute и PostgreSQL;
+- выделение API Gateway как отдельного слоя повышает управляемость API, но увеличивает потребление compute-ресурсов;
 
 Связанные документы:
 - base-architecture.md;
