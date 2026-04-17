@@ -280,8 +280,8 @@ flowchart LR
 ### Основные компоненты инфраструктуры
 
 - Geo Routing / DNS layer — межрегиональная маршрутизация пользователей;
-- NGINX — ingress (входной контур), reverse proxy (обратный прокси) и балансировщик нагрузки;
-- API Gateway — слой публикации и маршрутизации клиентских API (mobile и web);
+- региональные NGINX — ingress (входной контур), reverse proxy (обратный прокси) и балансировщик нагрузки на уровне каждого региона;
+- региональные API Gateway — слой публикации и маршрутизации клиентских API (mobile и web) внутри каждого региона;
 - Device Integration Domain — обработка интеграционного трафика устройств и партнёров;
 - доменные сервисы;
 - RabbitMQ (брокер сообщений);
@@ -296,7 +296,8 @@ flowchart LR
 - failover (переключение при сбое) внутри региона;
 - репликация данных между регионами;
 - изоляция доменов;
-- масштабируемость.
+- масштабируемость;
+- входной контур (NGINX + API Gateway) развёрнут отдельно в каждом регионе и не является глобально единым компонентом.
 
 ### Упрощённая схема
 
@@ -311,8 +312,8 @@ flowchart TB
     NGINX1 --> APIGW1[API Gateway Region 1]
     NGINX2 --> APIGW2[API Gateway Region 2]
 
-    NGINX1 --> DeviceIntegration1[Device Integration Domain]
-    NGINX2 --> DeviceIntegration2[Device Integration Domain]
+    NGINX1 --> DeviceIntegration1[Device Integration Domain Region 1]
+    NGINX2 --> DeviceIntegration2[Device Integration Domain Region 2]
 
     subgraph Region1[Region 1]
         DC1[Primary DC]
@@ -340,6 +341,17 @@ flowchart TB
     DB1 <-. replication .-> DB2
     S31 <-. backup / replication .-> S32
 ```
+
+### Пояснение к входному контуру
+
+Входной контур системы является региональным и состоит из двух уровней:
+
+- NGINX (ingress — входной контур) — принимает внешний трафик после маршрутизации через Geo Routing / DNS;
+- API Gateway (шлюз API) — обрабатывает клиентские API-запросы и маршрутизирует их в доменные сервисы региона.
+
+Трафик устройств (Device Integration) после попадания в регион через NGINX направляется напрямую в Device Integration Domain, минуя API Gateway.
+
+Таким образом, схема соответствует base-architecture.md и отражает разделение клиентского и интеграционного потоков.
 
 ### Связанные ADR и документы
 

@@ -532,7 +532,6 @@ flowchart TB
     R1_ENTRY --> Social1
     R1_ENTRY --> Challenge1
     R1_ENTRY --> Recommendation1
-    R1_ENTRY --> Notification1
     R1_ENTRY --> Commerce1
 
     R2_ENTRY --> Auth2
@@ -541,7 +540,6 @@ flowchart TB
     R2_ENTRY --> Social2
     R2_ENTRY --> Challenge2
     R2_ENTRY --> Recommendation2
-    R2_ENTRY --> Notification2
     R2_ENTRY --> Commerce2
 
     DeviceIntegration1 -. failover .-> DeviceIntegration1b
@@ -656,6 +654,8 @@ RabbitMQ синхронизирует событийные потоки межд
 В каждом регионе также присутствуют инфраструктурные компоненты хранения и наблюдаемости: отдельные базы данных PostgreSQL доменов, Object Storage для медиа и резервных копий, Cache для ускорения чтения, региональный NGINX как ingress-слой, региональный API Gateway как слой клиентских API и Monitoring / Logging / Tracing для диагностики и контроля системы. Это позволяет не смешивать транзакционные, объектные и аналитические данные и обеспечивает управляемость системы при росте нагрузки.
 
 Commerce Integration Domain участвует в поставке регионально-зависимого контента и промоакций. Recommendation Domain использует эти данные при формировании персонализированной выдачи, а Social Domain может использовать их для региональных социальных кампаний и промоматериалов.
+
+Notification Domain является внутренним доменом, который получает события от других доменов через RabbitMQ и формирует пользовательские уведомления. Прямой внешний доступ к Notification Domain отсутствует: получение уведомлений пользователем осуществляется через клиентский API слой (API Gateway), а не через прямое обращение к домену уведомлений.
 
 Такой подход позволяет:
 
